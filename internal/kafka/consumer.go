@@ -2,7 +2,9 @@ package kafka
 
 import (
 	"context"
+	"strconv"
 
+	"github.com/Fanamon/flight-processing-service/internal/metrics"
 	"github.com/IBM/sarama"
 )
 
@@ -54,6 +56,9 @@ func (cg *ConsumerGroup) Cleanup(sarama.ConsumerGroupSession) error {
 
 func (cg *ConsumerGroup) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
+		lag := claim.HighWaterMarkOffset() - msg.Offset - 1
+		metrics.KafkaConsumerLag.WithLabelValues(msg.Topic, strconv.Itoa(int(msg.Partition))).Set(float64(lag))
+
 		if err := cg.handle(msg.Value); err != nil {
 			return err
 		}

@@ -2,9 +2,11 @@ package service
 
 import (
 	"database/sql"
+	"log"
 	"time"
 
 	"github.com/Fanamon/flight-processing-service/internal/kafka"
+	"github.com/Fanamon/flight-processing-service/internal/metrics"
 	"github.com/Fanamon/flight-processing-service/internal/model"
 	"github.com/Fanamon/flight-processing-service/internal/repository"
 	"github.com/google/uuid"
@@ -54,17 +56,28 @@ func (s *FlightService) CreateFlight(request *model.FlightRequest) (int, error) 
 		return 0, err
 	}
 
+	pending, processed, errorCount, err := s.repositoryMeta.CollectMessagesCount()
+	if err != nil {
+		log.Printf("collect messages count: %v", err)
+	} else {
+		metrics.FlightMetaStatus.WithLabelValues("pending").Set(float64(pending))
+		metrics.FlightMetaStatus.WithLabelValues("processed").Set(float64(processed))
+		metrics.FlightMetaStatus.WithLabelValues("error").Set(float64(errorCount))
+	}
+
 	return meta.ID, nil
 }
 
 func (s *FlightService) ProcessFlightMessage(message []byte) error {
 	metaID, flightRequest, err := kafka.UnmarshalFlightMessage(message)
 	if err != nil {
+		metrics.KafkaErrors.WithLabelValues("process").Inc()
 		return err
 	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
+		metrics.KafkaErrors.WithLabelValues("process").Inc()
 		return err
 	}
 
@@ -78,14 +91,35 @@ func (s *FlightService) ProcessFlightMessage(message []byte) error {
 		PassengersCount: flightRequest.PassengersCount,
 	}
 	if err := s.repositoryFlight.UpsertTx(tx, flight); err != nil {
+		metrics.KafkaErrors.WithLabelValues("process").Inc()
 		return err
 	}
 
 	if err := s.repositoryMeta.UpdateStatusTx(tx, metaID, "processed"); err != nil {
+		metrics.KafkaErrors.WithLabelValues("process").Inc()
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		metrics.KafkaErrors.WithLabelValues("process").Inc()
+		return err
+	}
+
+	pending, processed, errorCount, err := s.repositoryMeta.CollectMessagesCount()
+	if err != nil {
+		log.Printf("collect messages count: %v", err)
+	} else {
+		metrics.FlightMetaStatus.WithLabelValues("pending").Set(float64(pending))
+		metrics.FlightMetaStatus.WithLabelValues("processed").Set(float64(processed))
+		metrics.FlightMetaStatus.WithLabelValues("error").Set(float64(errorCount))
+	}
+
+	metrics.KafkaMessagesProcessed.Inc()
+	metrics.FlightsProcessed.Inc()
+	metrics.Passengers.Observe(float64(flightRequest.PassengersCount))
+	metrics.AircraftTypeCount.WithLabelValues(flightRequest.AircraftType).Inc()
+
+	return nil
 }
 
 func (s *FlightService) GetFlight(flightNumber string, departureDate time.Time) (*model.FlightData, error) {

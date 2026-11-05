@@ -73,6 +73,46 @@ func (repo *MetaRepository) GetByFlightNumber(flightNumber string, status string
 	return items, total, nil
 }
 
+func (repo *MetaRepository) CollectMessagesCount() (int, int, int, error) {
+	builder := repo.sb.
+		Select("status", "COUNT(*)").
+		From("flight_meta").
+		GroupBy("status")
+
+	rows, err := builder.RunWith(repo.db).Query()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	defer rows.Close()
+	pendingCount := 0
+	processedCount := 0
+	errorCount := 0
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return 0, 0, 0, err
+		}
+
+		switch status {
+		case "pending":
+			pendingCount = count
+		case "processed":
+			processedCount = count
+		case "error":
+			errorCount = count
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, 0, 0, err
+	}
+
+	return pendingCount, processedCount, errorCount, nil
+}
+
 func (repo *MetaRepository) create(runner squirrel.BaseRunner, meta *model.FlightMeta) error {
 	now := time.Now().UTC()
 	err := repo.sb.

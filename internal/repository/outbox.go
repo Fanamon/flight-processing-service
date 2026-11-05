@@ -140,6 +140,46 @@ func (repo *OutboxRepository) CleanupOldMessages(retentionDays int64) error {
 	return nil
 }
 
+func (repo *OutboxRepository) CollectMessagesCount() (int, int, int, error) {
+	builder := repo.sb.
+		Select("status", "COUNT(*)").
+		From("outbox_messages").
+		GroupBy("status")
+
+	rows, err := builder.RunWith(repo.db).Query()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	defer rows.Close()
+	pendingCount := 0
+	sentCount := 0
+	failedCount := 0
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return 0, 0, 0, err
+		}
+
+		switch status {
+		case "pending":
+			pendingCount = count
+		case "sent":
+			sentCount = count
+		case "failed":
+			failedCount = count
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, 0, 0, err
+	}
+
+	return pendingCount, sentCount, failedCount, nil
+}
+
 func scanOutboxMessage(rows *sql.Rows) ([]*model.OutboxMessage, error) {
 	var messages []*model.OutboxMessage
 
