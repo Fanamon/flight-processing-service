@@ -79,3 +79,12 @@ func MarshalFlightMessage(metaID int, request *model.FlightRequest) ([]byte, err
 
 	return payload, nil
 }
+
+func UnmarshalFlightMessage(payload []byte) (int, *model.FlightRequest, error) {
+	jsonMessage := &flightMessage{}
+	if err := json.Unmarshal(payload, jsonMessage); err != nil {
+		return 0, nil, err
+	}
+
+	return jsonMessage.MetaID, &jsonMessage.FlightRequest, nil
+}

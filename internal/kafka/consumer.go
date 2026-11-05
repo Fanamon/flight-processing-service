@@ -2,23 +2,21 @@ package kafka
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 
-	"github.com/Fanamon/flight-processing-service/internal/model"
-	"github.com/Fanamon/flight-processing-service/internal/repository"
 	"github.com/IBM/sarama"
 )
 
 type ConsumerGroup struct {
-	db               *sql.DB
-	repositoryFlight *repository.FlightRepository
-	repositoryMeta   *repository.MetaRepository
-	group            sarama.ConsumerGroup
-	topic            string
+	flightProcessor FlightProcessor
+	group           sarama.ConsumerGroup
+	topic           string
 }
 
-func NewConsumerGroup(brokerAddrs []string, groupID string, topic string, db *sql.DB, repositoryFlight *repository.FlightRepository, repositoryMeta *repository.MetaRepository) (*ConsumerGroup, error) {
+type FlightProcessor interface {
+	ProcessFlightMessage(message []byte) error
+}
+
+func NewConsumerGroup(brokerAddrs []string, groupID string, topic string, flightProcessor FlightProcessor) (*ConsumerGroup, error) {
 	config := sarama.NewConfig()
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	group, err := sarama.NewConsumerGroup(brokerAddrs, groupID, config)
@@ -27,11 +25,9 @@ func NewConsumerGroup(brokerAddrs []string, groupID string, topic string, db *sq
 	}
 
 	return &ConsumerGroup{
-		db:               db,
-		repositoryFlight: repositoryFlight,
-		repositoryMeta:   repositoryMeta,
-		group:            group,
-		topic:            topic,
+		flightProcessor: flightProcessor,
+		group:           group,
+		topic:           topic,
 	}, nil
 }
 
@@ -73,32 +69,5 @@ func (cg *ConsumerGroup) Close() error {
 }
 
 func (cg *ConsumerGroup) handle(message []byte) error {
-	jsonMessage := &flightMessage{}
-	if err := json.Unmarshal(message, jsonMessage); err != nil {
-		return err
-	}
-
-	tx, err := cg.db.Begin()
-	if err != nil {
-		return err
-	}
-
-	defer tx.Rollback()
-
-	flight := &model.FlightData{
-		AircraftType:    jsonMessage.AircraftType,
-		FlightNumber:    jsonMessage.FlightNumber,
-		DepartureDate:   jsonMessage.DepartureDate,
-		ArrivalDate:     jsonMessage.ArrivalDate,
-		PassengersCount: jsonMessage.PassengersCount,
-	}
-	if err := cg.repositoryFlight.UpsertTx(tx, flight); err != nil {
-		return err
-	}
-
-	if err := cg.repositoryMeta.UpdateStatusTx(tx, jsonMessage.MetaID, "processed"); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return cg.flightProcessor.ProcessFlightMessage(message)
 }

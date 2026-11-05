@@ -9,18 +9,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Fanamon/flight-processing-service/internal/kafka"
 	"github.com/Fanamon/flight-processing-service/internal/model"
-	"github.com/Fanamon/flight-processing-service/internal/repository"
-	"github.com/google/uuid"
+	"github.com/Fanamon/flight-processing-service/internal/service"
 )
 
 type FlightHandler struct {
-	db               *sql.DB
-	repositoryMeta   *repository.MetaRepository
-	repositoryOutbox *repository.OutboxRepository
-	repositoryFlight *repository.FlightRepository
-	topic            string
+	flightService *service.FlightService
 }
 
 func (h *FlightHandler) CreateFlight(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +24,7 @@ func (h *FlightHandler) CreateFlight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta, err := h.insertFlight(request)
+	metaID, err := h.flightService.CreateFlight(request)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -39,10 +33,10 @@ func (h *FlightHandler) CreateFlight(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":             meta.ID,
-		"flight_number":  meta.FlightNumber,
-		"departure_date": meta.DepartureDate,
-		"status":         meta.Status,
+		"id":             metaID,
+		"flight_number":  request.FlightNumber,
+		"departure_date": request.DepartureDate,
+		"status":         "pending",
 	})
 }
 
@@ -60,7 +54,7 @@ func (h *FlightHandler) GetFlight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flightData, err := h.repositoryFlight.Get(flightNumber, departureDate)
+	flightData, err := h.flightService.GetFlight(flightNumber, departureDate)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "flight not found", http.StatusNotFound)
@@ -93,24 +87,15 @@ func (h *FlightHandler) GetFlightMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta, total, err := h.repositoryMeta.GetByFlightNumber(flightNumber, status, limit, 0)
+	metaResponse, err := h.flightService.GetFlightMeta(flightNumber, status, limit)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	metaResponse := createMetaResponse(meta)
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]any{
-		"flight_number": flightNumber,
-		"meta":          metaResponse,
-		"pagination": map[string]any{
-			"total": total,
-			"limit": limit,
-		},
-	})
+	json.NewEncoder(w).Encode(metaResponse)
 }
 
 func decodeFlightRequest(r *http.Request) (*model.FlightRequest, error) {
@@ -124,45 +109,6 @@ func decodeFlightRequest(r *http.Request) (*model.FlightRequest, error) {
 	}
 
 	return &request, nil
-}
-
-func (h *FlightHandler) insertFlight(request *model.FlightRequest) (*model.FlightMeta, error) {
-	tx, err := h.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-
-	defer tx.Rollback()
-
-	meta := &model.FlightMeta{
-		FlightNumber:  request.FlightNumber,
-		DepartureDate: request.DepartureDate,
-	}
-	if err := h.repositoryMeta.CreateTx(tx, meta); err != nil {
-		return nil, err
-	}
-
-	payload, err := kafka.MarshalFlightMessage(meta.ID, request)
-	if err != nil {
-		return nil, err
-	}
-
-	outboxMessage := &model.OutboxMessage{
-		MessageID: uuid.NewString(),
-		Topic:     h.topic,
-		Payload:   string(payload),
-	}
-	if err := h.repositoryOutbox.CreateMessage(tx, outboxMessage); err != nil {
-		{
-			return nil, err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	return meta, nil
 }
 
 func parseMetaQuery(r *http.Request) (string, int, error) {
@@ -185,20 +131,4 @@ func parseMetaQuery(r *http.Request) (string, int, error) {
 	}
 
 	return status, limit, nil
-}
-
-func createMetaResponse(items []*model.FlightMeta) []map[string]any {
-	metaResponse := make([]map[string]any, len(items))
-	for index, item := range items {
-		metaResponse[index] = map[string]any{
-			"id":             item.ID,
-			"flight_number":  item.FlightNumber,
-			"departure_date": item.DepartureDate,
-			"status":         item.Status,
-			"created_at":     item.CreatedAt,
-			"processed_at":   item.ProcessedAt,
-		}
-	}
-
-	return metaResponse
 }

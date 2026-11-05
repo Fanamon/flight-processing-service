@@ -11,12 +11,12 @@ type FlightRequest struct {
 }
 
 type FlightMeta struct {
-	ID            int        `db:"id"`
-	FlightNumber  string     `db:"flight_number"`
-	DepartureDate time.Time  `db:"departure_date"`
-	Status        string     `db:"status"` // pending, processed, error
-	CreatedAt     time.Time  `db:"created_at"`
-	ProcessedAt   *time.Time `db:"processed_at"`
+	ID            int        `db:"id" json:"id"`
+	FlightNumber  string     `db:"flight_number" json:"flight_number"`
+	DepartureDate time.Time  `db:"departure_date" json:"departure_date"`
+	Status        string     `db:"status" json:"status"` // pending, processed, error
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
+	ProcessedAt   *time.Time `db:"processed_at" json:"processed_at"`
 }
 
 type FlightData struct {
@@ -38,4 +38,15 @@ type OutboxMessage struct {
 	CreatedAt  time.Time  `db:"created_at"`
 	SentAt     *time.Time `db:"sent_at"`
 	LastError  *string    `db:"last_error"`
+}
+
+type Pagination struct {
+	Total int `json:"total"`
+	Limit int `json:"limit"`
+}
+
+type FlightMetaResponse struct {
+	FlightNumber string        `json:"flight_number"`
+	Meta         []*FlightMeta `json:"meta"`
+	Pagination   Pagination    `json:"pagination"`
 }
