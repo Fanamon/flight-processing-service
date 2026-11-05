@@ -47,6 +47,14 @@ func (repo *FlightRepository) Get(flightNumber string, departureDate time.Time) 
 }
 
 func (repo *FlightRepository) Upsert(flight *model.FlightData) error {
+	return repo.upsert(repo.db, flight)
+}
+
+func (repo *FlightRepository) UpsertTx(tx *sql.Tx, flight *model.FlightData) error {
+	return repo.upsert(tx, flight)
+}
+
+func (repo *FlightRepository) upsert(runner squirrel.BaseRunner, flight *model.FlightData) error {
 	now := time.Now().UTC()
 
 	builder := repo.sb.
@@ -59,7 +67,7 @@ func (repo *FlightRepository) Upsert(flight *model.FlightData) error {
         passengers_count = EXCLUDED.passengers_count,
         updated_at = EXCLUDED.updated_at`)
 
-	_, err := builder.RunWith(repo.db).Exec()
+	_, err := builder.RunWith(runner).Exec()
 	if err != nil {
 		return err
 	}

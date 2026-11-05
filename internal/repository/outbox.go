@@ -46,7 +46,7 @@ func (repo *OutboxRepository) CreateMessage(tx *sql.Tx, message *model.OutboxMes
 	return nil
 }
 
-func (repo *OutboxRepository) GetPendingMessages(limit int) ([]*model.OutboxMessage, error) {
+func (repo *OutboxRepository) GetPendingMessages(limit int64) ([]*model.OutboxMessage, error) {
 	builder := repo.sb.
 		Select("id", "message_id", "topic", "payload", "status", "retry_count", "created_at", "sent_at", "last_error").
 		From("outbox_messages").
@@ -97,7 +97,7 @@ func (repo *OutboxRepository) MarkAsSent(messageID string) error {
 	return nil
 }
 
-func (repo *OutboxRepository) MarkAsFailed(messageID string, errorMsg string, maxRetries int) error {
+func (repo *OutboxRepository) MarkAsFailed(messageID string, errorMsg string, maxRetries int64) error {
 	builder := repo.sb.
 		Update("outbox_messages").
 		Set("retry_count", squirrel.Expr("retry_count + 1")).
@@ -124,8 +124,8 @@ func (repo *OutboxRepository) MarkAsFailed(messageID string, errorMsg string, ma
 	return nil
 }
 
-func (repo *OutboxRepository) CleanupOldMessages(retentionDays int) error {
-	cutoffDate := time.Now().UTC().AddDate(0, 0, -retentionDays)
+func (repo *OutboxRepository) CleanupOldMessages(retentionDays int64) error {
+	cutoffDate := time.Now().UTC().AddDate(0, 0, -int(retentionDays))
 
 	builder := repo.sb.
 		Delete("outbox_messages").

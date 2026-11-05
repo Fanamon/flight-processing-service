@@ -45,32 +45,11 @@ func (repo *MetaRepository) Create(meta *model.FlightMeta) error {
 }
 
 func (repo *MetaRepository) UpdateStatus(id int, status string) error {
-	now := time.Now().UTC()
+	return repo.updateStatus(repo.db, id, status)
+}
 
-	query, args, err := repo.sb.
-		Update("flight_meta").
-		Set("status", status).
-		Set("processed_at", now).
-		Where(squirrel.Eq{"id": id}).
-		ToSql()
-	if err != nil {
-		return err
-	}
-
-	result, err := repo.db.Exec(query, args...)
-	if err != nil {
-		return err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
+func (repo *MetaRepository) UpdateStatusTx(tx *sql.Tx, id int, status string) error {
+	return repo.updateStatus(tx, id, status)
 }
 
 func (repo *MetaRepository) GetByFlightNumber(flightNumber string, status string, limit int, offset int) ([]*model.FlightMeta, int, error) {
@@ -108,6 +87,35 @@ func (repo *MetaRepository) GetByFlightNumber(flightNumber string, status string
 	}
 
 	return items, total, nil
+}
+
+func (repo *MetaRepository) updateStatus(runner squirrel.BaseRunner, id int, status string) error {
+	now := time.Now().UTC()
+
+	query, args, err := repo.sb.
+		Update("flight_meta").
+		Set("status", status).
+		Set("processed_at", now).
+		Where(squirrel.Eq{"id": id}).
+		ToSql()
+	if err != nil {
+		return err
+	}
+
+	result, err := runner.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 func filterByFlight(builder squirrel.SelectBuilder, flightNumber, status string) squirrel.SelectBuilder {
