@@ -50,16 +50,7 @@ func (p *SyncProducer) Close() error {
 }
 
 func (p *SyncProducer) SendFlightMessage(metaID int, flightRequest *model.FlightRequest) error {
-	if flightRequest == nil {
-		return fmt.Errorf("flight request is nil")
-	}
-
-	flightMsg := flightMessage{
-		MetaID:        metaID,
-		FlightRequest: *flightRequest,
-	}
-
-	payload, err := json.Marshal(flightMsg)
+	payload, err := MarshalFlightMessage(metaID, flightRequest)
 	if err != nil {
 		return err
 	}
@@ -69,4 +60,22 @@ func (p *SyncProducer) SendFlightMessage(metaID int, flightRequest *model.Flight
 	}
 
 	return nil
+}
+
+func MarshalFlightMessage(metaID int, request *model.FlightRequest) ([]byte, error) {
+	if request == nil {
+		return nil, fmt.Errorf("flight request is nil")
+	}
+
+	flightMsg := flightMessage{
+		MetaID:        metaID,
+		FlightRequest: *request,
+	}
+
+	payload, err := json.Marshal(flightMsg)
+	if err != nil {
+		return nil, err
+	}
+
+	return payload, nil
 }

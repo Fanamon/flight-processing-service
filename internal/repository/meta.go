@@ -21,27 +21,11 @@ func NewMetaRepository(db *sql.DB) *MetaRepository {
 }
 
 func (repo *MetaRepository) Create(meta *model.FlightMeta) error {
-	now := time.Now().UTC()
+	return repo.create(repo.db, meta)
+}
 
-	query, args, err := repo.sb.
-		Insert("flight_meta").
-		Columns("flight_number", "departure_date", "status", "created_at").
-		Values(meta.FlightNumber, meta.DepartureDate, "pending", now).
-		Suffix("RETURNING id").
-		ToSql()
-	if err != nil {
-		return err
-	}
-
-	err = repo.db.QueryRow(query, args...).Scan(&meta.ID)
-	if err != nil {
-		return err
-	}
-
-	meta.Status = "pending"
-	meta.CreatedAt = now
-
-	return nil
+func (repo *MetaRepository) CreateTx(tx *sql.Tx, meta *model.FlightMeta) error {
+	return repo.create(tx, meta)
 }
 
 func (repo *MetaRepository) UpdateStatus(id int, status string) error {
@@ -87,6 +71,26 @@ func (repo *MetaRepository) GetByFlightNumber(flightNumber string, status string
 	}
 
 	return items, total, nil
+}
+
+func (repo *MetaRepository) create(runner squirrel.BaseRunner, meta *model.FlightMeta) error {
+	now := time.Now().UTC()
+	err := repo.sb.
+		Insert("flight_meta").
+		Columns("flight_number", "departure_date", "status", "created_at").
+		Values(meta.FlightNumber, meta.DepartureDate, "pending", now).
+		Suffix("RETURNING id").
+		RunWith(runner).
+		QueryRow().
+		Scan(&meta.ID)
+	if err != nil {
+		return err
+	}
+
+	meta.Status = "pending"
+	meta.CreatedAt = now
+
+	return nil
 }
 
 func (repo *MetaRepository) updateStatus(runner squirrel.BaseRunner, id int, status string) error {
