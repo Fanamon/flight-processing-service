@@ -25,10 +25,7 @@ import (
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Fatal(err)
-	}
-
+	godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
