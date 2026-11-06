@@ -9,12 +9,19 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Fanamon/flight-processing-service/internal/metrics"
 	"github.com/Fanamon/flight-processing-service/internal/model"
 	"github.com/Fanamon/flight-processing-service/internal/service"
 )
 
 type FlightHandler struct {
 	flightService *service.FlightService
+}
+
+func NewFlightHandler(service *service.FlightService) *FlightHandler {
+	return &FlightHandler{
+		flightService: service,
+	}
 }
 
 func (h *FlightHandler) CreateFlight(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +103,16 @@ func (h *FlightHandler) GetFlightMeta(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(metaResponse)
+}
+
+func (h *FlightHandler) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/flights", metrics.ObserveHTTP(http.HandlerFunc(h.CreateFlight)))
+	mux.Handle("GET /api/flights", metrics.ObserveHTTP(http.HandlerFunc(h.GetFlight)))
+	mux.Handle("GET /api/flights/{flight_number}/meta", metrics.ObserveHTTP(http.HandlerFunc(h.GetFlightMeta)))
+	mux.Handle("GET /metrics", metrics.Handler())
+
+	return mux
 }
 
 func decodeFlightRequest(r *http.Request) (*model.FlightRequest, error) {

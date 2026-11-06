@@ -20,6 +20,18 @@ type FlightService struct {
 	topic            string
 }
 
+func NewFlightService(db *sql.DB, meta *repository.MetaRepository, outbox *repository.OutboxRepository,
+	flight *repository.FlightRepository, topic string,
+) *FlightService {
+	return &FlightService{
+		db:               db,
+		repositoryMeta:   meta,
+		repositoryOutbox: outbox,
+		repositoryFlight: flight,
+		topic:            topic,
+	}
+}
+
 func (s *FlightService) CreateFlight(request *model.FlightRequest) (int, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

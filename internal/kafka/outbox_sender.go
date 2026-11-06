@@ -18,6 +18,19 @@ type OutboxSender struct {
 	OutboxRetentionDays int64
 }
 
+func NewOutboxSender(repo *repository.OutboxRepository, producer *SyncProducer, poll time.Duration,
+	batchSize int64, maxRetries int64, retentionDays int64,
+) *OutboxSender {
+	return &OutboxSender{
+		repository:          repo,
+		producer:            producer,
+		OutboxPollInterval:  poll,
+		OutboxBatchSize:     batchSize,
+		OutboxMaxRetries:    maxRetries,
+		OutboxRetentionDays: retentionDays,
+	}
+}
+
 func (os *OutboxSender) Run(ctx context.Context) error {
 	ticker := time.NewTicker(os.OutboxPollInterval)
 
