@@ -1,8 +1,12 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Fanamon/flight-processing-service/internal/kafka"
@@ -10,6 +14,7 @@ import (
 	"github.com/Fanamon/flight-processing-service/internal/model"
 	"github.com/Fanamon/flight-processing-service/internal/repository"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 type FlightService struct {
@@ -17,17 +22,19 @@ type FlightService struct {
 	repositoryMeta   *repository.MetaRepository
 	repositoryOutbox *repository.OutboxRepository
 	repositoryFlight *repository.FlightRepository
+	redisClient      *redis.Client
 	topic            string
 }
 
 func NewFlightService(db *sql.DB, meta *repository.MetaRepository, outbox *repository.OutboxRepository,
-	flight *repository.FlightRepository, topic string,
+	flight *repository.FlightRepository, redisClient *redis.Client, topic string,
 ) *FlightService {
 	return &FlightService{
 		db:               db,
 		repositoryMeta:   meta,
 		repositoryOutbox: outbox,
 		repositoryFlight: flight,
+		redisClient:      redisClient,
 		topic:            topic,
 	}
 }
@@ -117,6 +124,34 @@ func (s *FlightService) ProcessFlightMessage(message []byte) error {
 		return err
 	}
 
+	dataKey := fmt.Sprintf("flight:data:%s:%s", flightRequest.FlightNumber, flightRequest.DepartureDate.UTC().Format(time.RFC3339))
+	metrics.RedisRequestsTotal.WithLabelValues("delete").Inc()
+	start := time.Now()
+	err = s.redisClient.Del(context.Background(), dataKey).Err()
+	metrics.RedisDuration.WithLabelValues("delete").Observe(time.Since(start).Seconds())
+	if err != nil {
+		log.Printf("redis: %v", err)
+		metrics.RedisErrorsTotal.WithLabelValues("delete").Inc()
+	}
+	pattern := fmt.Sprintf("flight:meta:%s:*", flightRequest.FlightNumber)
+	start = time.Now()
+	iter := s.redisClient.Scan(context.Background(), 0, pattern, 0).Iterator()
+	metrics.RedisDuration.WithLabelValues("scan").Observe(time.Since(start).Seconds())
+	for iter.Next(context.Background()) {
+		metrics.RedisRequestsTotal.WithLabelValues("delete").Inc()
+		start = time.Now()
+		err := s.redisClient.Del(context.Background(), iter.Val()).Err()
+		metrics.RedisDuration.WithLabelValues("delete").Observe(time.Since(start).Seconds())
+		if err != nil {
+			log.Printf("redis: %v", err)
+			metrics.RedisErrorsTotal.WithLabelValues("delete").Inc()
+		}
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("redis: %v", err)
+	}
+	s.UpdateCacheSize(context.Background())
+
 	pending, processed, errorCount, err := s.repositoryMeta.CollectMessagesCount()
 	if err != nil {
 		log.Printf("collect messages count: %v", err)
@@ -152,4 +187,30 @@ func (s *FlightService) GetFlightMeta(flightNumber string, status string, limit 
 			Limit: limit,
 		},
 	}, nil
+}
+
+func (s *FlightService) UpdateCacheSize(ctx context.Context) {
+	start := time.Now()
+	info, err := s.redisClient.Info(ctx, "memory").Result()
+	metrics.RedisDuration.WithLabelValues("info").Observe(time.Since(start).Seconds())
+	if err != nil {
+		log.Printf("redis: %v", err)
+		return
+	}
+
+	for _, line := range strings.Split(info, "\n") {
+		if !strings.HasPrefix(line, "used_memory:") {
+			continue
+		}
+
+		raw := strings.TrimSpace(strings.TrimPrefix(line, "used_memory:"))
+		size, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			log.Printf("redis: %v", err)
+			return
+		}
+
+		metrics.RedisCacheSize.Set(size)
+		return
+	}
 }

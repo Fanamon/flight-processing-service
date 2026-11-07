@@ -13,16 +13,20 @@ type Config struct {
 	KafkaTopic          string
 	KafkaGroupID        string
 	HTTPPort            string
+	RedisAddr           string
+	RedisPassword       string
 	OutboxPollInterval  time.Duration
 	OutboxBatchSize     int64
 	OutboxMaxRetries    int64
 	OutboxRetentionDays int64
+	RedisDB             int64
+	RedisTTL            int64
 }
 
 func Load() (Config, error) {
 	cfg := Config{}
 
-	fieldsStrings := []struct {
+	fieldsStringsRequired := []struct {
 		key string
 		dst *string
 	}{
@@ -31,6 +35,14 @@ func Load() (Config, error) {
 		{"KAFKA_TOPIC", &cfg.KafkaTopic},
 		{"KAFKA_GROUP_ID", &cfg.KafkaGroupID},
 		{"HTTP_PORT", &cfg.HTTPPort},
+		{"REDIS_ADDR", &cfg.RedisAddr},
+	}
+
+	fieldsStringsNonRequired := []struct {
+		key string
+		dst *string
+	}{
+		{"REDIS_PASSWORD", &cfg.RedisPassword},
 	}
 
 	fieldsTimeDuration := []struct {
@@ -47,10 +59,21 @@ func Load() (Config, error) {
 		{"OUTBOX_BATCH_SIZE", &cfg.OutboxBatchSize},
 		{"OUTBOX_MAX_RETRIES", &cfg.OutboxMaxRetries},
 		{"OUTBOX_RETENTION_DAYS", &cfg.OutboxRetentionDays},
+		{"REDIS_DB", &cfg.RedisDB},
+		{"REDIS_TTL", &cfg.RedisTTL},
 	}
 
-	for _, field := range fieldsStrings {
-		value, err := ParseEnvString(field.key)
+	for _, field := range fieldsStringsRequired {
+		value, err := ParseEnvString(field.key, true)
+		if err != nil {
+			return Config{}, err
+		}
+
+		*field.dst = value
+	}
+
+	for _, field := range fieldsStringsNonRequired {
+		value, err := ParseEnvString(field.key, false)
 		if err != nil {
 			return Config{}, err
 		}
@@ -79,9 +102,9 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-func ParseEnvString(key string) (string, error) {
+func ParseEnvString(key string, required bool) (string, error) {
 	raw := os.Getenv(key)
-	if raw == "" {
+	if required && raw == "" {
 		return "", fmt.Errorf("%s is required", key)
 	}
 

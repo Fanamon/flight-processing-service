@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,15 +13,20 @@ import (
 	"github.com/Fanamon/flight-processing-service/internal/metrics"
 	"github.com/Fanamon/flight-processing-service/internal/model"
 	"github.com/Fanamon/flight-processing-service/internal/service"
+	"github.com/redis/go-redis/v9"
 )
 
 type FlightHandler struct {
-	flightService *service.FlightService
+	flightService     *service.FlightService
+	redisClient       *redis.Client
+	redisTimeDuration time.Duration
 }
 
-func NewFlightHandler(service *service.FlightService) *FlightHandler {
+func NewFlightHandler(service *service.FlightService, redisClient *redis.Client, redisTimeDuration time.Duration) *FlightHandler {
 	return &FlightHandler{
-		flightService: service,
+		flightService:     service,
+		redisClient:       redisClient,
+		redisTimeDuration: redisTimeDuration,
 	}
 }
 
@@ -61,6 +67,27 @@ func (h *FlightHandler) GetFlight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := fmt.Sprintf("flight:data:%s:%s", flightNumber, departureDate.UTC().Format(time.RFC3339))
+	metrics.RedisRequestsTotal.WithLabelValues("get").Inc()
+	metrics.RedisKeyRequests.WithLabelValues(key).Inc()
+	start := time.Now()
+	redisValue, err := h.redisClient.Get(r.Context(), key).Result()
+	metrics.RedisDuration.WithLabelValues("get").Observe(time.Since(start).Seconds())
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(redisValue))
+		metrics.RedisHitsTotal.Inc()
+		return
+	}
+	if errors.Is(err, redis.Nil) {
+		metrics.RedisMissesTotal.Inc()
+	} else {
+		log.Printf("redis: %v", err)
+		metrics.RedisErrorsTotal.WithLabelValues("get").Inc()
+	}
+
 	flightData, err := h.flightService.GetFlight(flightNumber, departureDate)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -72,13 +99,29 @@ func (h *FlightHandler) GetFlight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]any{
+	payload, err := json.Marshal(map[string]any{
 		"flight_number":    flightData.FlightNumber,
 		"departure_date":   flightData.DepartureDate,
 		"passengers_count": flightData.PassengersCount,
 	})
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	metrics.RedisRequestsTotal.WithLabelValues("set").Inc()
+	start = time.Now()
+	err = h.redisClient.Set(r.Context(), key, payload, h.redisTimeDuration).Err()
+	metrics.RedisDuration.WithLabelValues("set").Observe(time.Since(start).Seconds())
+	if err != nil {
+		log.Printf("redis: %v", err)
+		metrics.RedisErrorsTotal.WithLabelValues("set").Inc()
+	}
+	h.flightService.UpdateCacheSize(r.Context())
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
+	w.WriteHeader(http.StatusOK)
+	w.Write(payload)
 }
 
 func (h *FlightHandler) GetFlightMeta(w http.ResponseWriter, r *http.Request) {
@@ -94,15 +137,52 @@ func (h *FlightHandler) GetFlightMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := fmt.Sprintf("flight:meta:%s:status=%s:limit=%d", flightNumber, status, limit)
+	metrics.RedisRequestsTotal.WithLabelValues("get").Inc()
+	metrics.RedisKeyRequests.WithLabelValues(key).Inc()
+	start := time.Now()
+	redisValue, err := h.redisClient.Get(r.Context(), key).Result()
+	metrics.RedisDuration.WithLabelValues("get").Observe(time.Since(start).Seconds())
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(redisValue))
+		metrics.RedisHitsTotal.Inc()
+		return
+	}
+	if errors.Is(err, redis.Nil) {
+		metrics.RedisMissesTotal.Inc()
+	} else {
+		log.Printf("redis: %v", err)
+		metrics.RedisErrorsTotal.WithLabelValues("get").Inc()
+	}
+
 	metaResponse, err := h.flightService.GetFlightMeta(flightNumber, status, limit)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
+	payload, err := json.Marshal(metaResponse)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	metrics.RedisRequestsTotal.WithLabelValues("set").Inc()
+	start = time.Now()
+	err = h.redisClient.Set(r.Context(), key, payload, h.redisTimeDuration).Err()
+	metrics.RedisDuration.WithLabelValues("set").Observe(time.Since(start).Seconds())
+	if err != nil {
+		log.Printf("redis: %v", err)
+		metrics.RedisErrorsTotal.WithLabelValues("set").Inc()
+	}
+	h.flightService.UpdateCacheSize(r.Context())
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(metaResponse)
+	w.Write(payload)
 }
 
 func (h *FlightHandler) Routes() http.Handler {

@@ -22,12 +22,24 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       int(cfg.RedisDB),
+	})
+	defer redisClient.Close()
+
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -56,8 +68,8 @@ func main() {
 	metaRepo := repository.NewMetaRepository(db)
 	flightRepo := repository.NewFlightRepository(db)
 	outboxRepo := repository.NewOutboxRepository(db)
-	flightService := service.NewFlightService(db, metaRepo, outboxRepo, flightRepo, cfg.KafkaTopic)
-	flightHandler := handlers.NewFlightHandler(flightService)
+	flightService := service.NewFlightService(db, metaRepo, outboxRepo, flightRepo, redisClient, cfg.KafkaTopic)
+	flightHandler := handlers.NewFlightHandler(flightService, redisClient, time.Duration(cfg.RedisTTL)*time.Second)
 
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 	syncProducer, err := kafka.NewSyncProducer(brokers, cfg.KafkaTopic)

@@ -129,6 +129,55 @@ var (
 			Help: "Number of pending messages in the outbox",
 		},
 	)
+
+	// Redis metrics
+	RedisRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_requests_total",
+			Help: "Total number of Redis requests",
+		},
+		[]string{"operation"}, // get, set, delete
+	)
+	RedisHitsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "redis_cache_hits_total",
+			Help: "Total number of cache hits",
+		},
+	)
+	RedisMissesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "redis_cache_misses_total",
+			Help: "Total number of cache misses",
+		},
+	)
+	RedisErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_errors_total",
+			Help: "Total number of Redis errors",
+		},
+		[]string{"operation"},
+	)
+	RedisCacheSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cache_size_bytes",
+			Help: "Approximate size of Redis cache (if available)",
+		},
+	)
+	RedisDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "redis_request_duration_seconds",
+			Help:    "Duration of Redis requests in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"operation"},
+	)
+	RedisKeyRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_key_requests_total",
+			Help: "Total number of Redis key lookups",
+		},
+		[]string{"key"},
+	)
 )
 
 type statusWriter struct {
@@ -161,5 +210,6 @@ func init() {
 	prometheus.MustRegister(HTTPRequests, HTTPDuration, KafkaMessagesSent, KafkaMessagesProcessed, KafkaErrors,
 		KafkaConsumerLag, FlightsProcessed, Passengers, AircraftTypeCount, FlightMetaStatus, OutboxMessagesTotal,
 		OutboxMessagesSentTotal, OutboxMessagesFailedTotal, OutboxProcessingDuration, OutboxRetryCount, OutboxLagSeconds,
-		OutboxPendingCount)
+		OutboxPendingCount, RedisRequestsTotal, RedisHitsTotal, RedisMissesTotal, RedisErrorsTotal, RedisCacheSize,
+		RedisDuration, RedisKeyRequests)
 }

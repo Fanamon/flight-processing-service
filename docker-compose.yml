@@ -17,6 +17,16 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    image: redis:8.10.3
+    container_name: flight-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "1"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
   kafka:
     image: apache/kafka:4.4.0
     hostname: kafka
@@ -72,3 +82,4 @@ volumes:
   kafka-data:
   prometheus-data:
   grafana-data:
+  redis-data:
